@@ -17,7 +17,7 @@ import time
 from typing import Optional
 
 from benchmarks.codebase import Turn, get_ground_truth, get_turns
-from benchmarks.scorer import BenchmarkResult, TurnScore, score_turn
+from benchmarks.scorer import BenchmarkResult, TokenStats, TurnScore, score_turn
 
 # Model to use - Haiku for cost efficiency
 MODEL = "claude-haiku-4-5-20251001"
@@ -41,15 +41,27 @@ def _get_client():
     return anthropic.Anthropic(api_key=api_key)
 
 
-def _call_claude(client, system: str, messages: list[dict]) -> str:
-    """Make a Claude API call with full message history."""
+def _call_claude(client, system: str, messages: list[dict]) -> tuple[str, int, int]:
+    """Make a Claude API call with full message history.
+
+    Returns:
+        (response_text, input_tokens, output_tokens)
+    """
     response = client.messages.create(
         model=MODEL,
         max_tokens=MAX_TOKENS,
         system=system,
         messages=messages,
     )
-    return response.content[0].text
+    text = response.content[0].text
+    input_tokens = response.usage.input_tokens
+    output_tokens = response.usage.output_tokens
+    return text, input_tokens, output_tokens
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~4 characters per token for code/English mix."""
+    return len(text) // 4
 
 
 def _format_ground_truth_as_example(gt: dict[str, dict]) -> str:
@@ -196,6 +208,7 @@ def run_baseline(
     """
     result = BenchmarkResult(mode="claude_baseline")
     running_summary = "No previous context - this is the first turn."
+    cumulative_input_tokens = 0
 
     for turn in turns:
         # Build the update prompt WITH previous context
@@ -212,8 +225,13 @@ def run_baseline(
         )
 
         messages = [{"role": "user", "content": update_prompt}]
-        response = _call_claude(client, BASELINE_SYSTEM, messages)
+        response, input_toks, _ = _call_claude(client, BASELINE_SYSTEM, messages)
         running_summary = response
+        cumulative_input_tokens += input_toks
+
+        # Estimate token counts for this turn
+        summary_tokens = _estimate_tokens(running_summary)
+        source_tokens = _estimate_tokens(turn.source)
 
         if on_progress:
             on_progress(turn.number, "baseline")
@@ -229,9 +247,18 @@ def run_baseline(
                 {"role": "assistant", "content": running_summary},
                 {"role": "user", "content": recall_prompt},
             ]
-            recall_response = _call_claude(client, BASELINE_SYSTEM, recall_messages)
+            recall_response, recall_toks, _ = _call_claude(
+                client, BASELINE_SYSTEM, recall_messages
+            )
+            cumulative_input_tokens += recall_toks
             recalled = _parse_recall_json(recall_response)
             ts = _score_with_normalization(turn.number, ground_truth, recalled)
+            ts.token_stats = TokenStats(
+                summary_tokens=summary_tokens,
+                source_tokens=source_tokens,
+                prompt_tokens=input_toks,
+                cumulative_tokens=cumulative_input_tokens,
+            )
             result.turn_scores.append(ts)
 
         time.sleep(0.3)
@@ -266,6 +293,7 @@ def run_omp_anchored(
     """
     result = BenchmarkResult(mode="claude_omp")
     running_intent = "No previous context - this is the first turn."
+    cumulative_input_tokens = 0
 
     for turn in turns:
         ground_truth = get_ground_truth(turn)
@@ -282,8 +310,12 @@ def run_omp_anchored(
         )
 
         messages = [{"role": "user", "content": update_prompt}]
-        response = _call_claude(client, OMP_SYSTEM, messages)
+        response, input_toks, _ = _call_claude(client, OMP_SYSTEM, messages)
         running_intent = response
+        cumulative_input_tokens += input_toks
+
+        summary_tokens = _estimate_tokens(running_intent)
+        source_tokens = _estimate_tokens(anchors_json)
 
         if on_progress:
             on_progress(turn.number, "omp")
@@ -305,9 +337,18 @@ def run_omp_anchored(
                 {"role": "assistant", "content": running_intent},
                 {"role": "user", "content": recall_prompt},
             ]
-            recall_response = _call_claude(client, OMP_SYSTEM, recall_messages)
+            recall_response, recall_toks, _ = _call_claude(
+                client, OMP_SYSTEM, recall_messages
+            )
+            cumulative_input_tokens += recall_toks
             recalled = _parse_recall_json(recall_response)
             ts = _score_with_normalization(turn.number, ground_truth, recalled)
+            ts.token_stats = TokenStats(
+                summary_tokens=summary_tokens,
+                source_tokens=source_tokens,
+                prompt_tokens=input_toks,
+                cumulative_tokens=cumulative_input_tokens,
+            )
             result.turn_scores.append(ts)
 
         time.sleep(0.3)

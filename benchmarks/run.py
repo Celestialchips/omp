@@ -16,8 +16,13 @@ import json
 import sys
 
 from benchmarks.codebase import get_turns, get_ground_truth
-from benchmarks.scorer import BenchmarkResult, score_turn, format_results
+from benchmarks.scorer import BenchmarkResult, TokenStats, score_turn, format_results
 from benchmarks.simulator import SimulatedLLM, PerfectRecall, DriftConfig
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~4 characters per token for code/English mix."""
+    return len(text) // 4
 
 
 def run_simulated(seed: int = 42) -> tuple[BenchmarkResult, BenchmarkResult]:
@@ -33,17 +38,37 @@ def run_simulated(seed: int = 42) -> tuple[BenchmarkResult, BenchmarkResult]:
     sim_result = BenchmarkResult(mode="simulated_llm")
     omp_result = BenchmarkResult(mode="omp_anchored")
 
+    # Simulate a running summary that grows with codebase complexity.
+    # In a real LLM session, the summary is the compressed context the model
+    # carries forward. We estimate it as ~2x the source token count (source +
+    # the model's own annotations about each function).
+    cumulative_tokens = 0
+
     for turn in turns:
         ground_truth = get_ground_truth(turn)
+        source_tokens = _estimate_tokens(turn.source)
+        # Simulated summary grows: source code + model's annotations per function
+        summary_tokens = source_tokens + len(ground_truth) * 30
+        prompt_tokens = summary_tokens + source_tokens + 50  # +instructions
+        cumulative_tokens += prompt_tokens
+
+        token_stats = TokenStats(
+            summary_tokens=summary_tokens,
+            source_tokens=source_tokens,
+            prompt_tokens=prompt_tokens,
+            cumulative_tokens=cumulative_tokens,
+        )
 
         # Simulated LLM recall
         sim_recalled = sim.recall(turn.number, ground_truth)
         sim_score = score_turn(turn.number, ground_truth, sim_recalled)
+        sim_score.token_stats = token_stats
         sim_result.turn_scores.append(sim_score)
 
         # OMP perfect recall
         omp_recalled = omp.recall(turn.number, ground_truth)
         omp_score = score_turn(turn.number, ground_truth, omp_recalled)
+        omp_score.token_stats = token_stats
         omp_result.turn_scores.append(omp_score)
 
     return sim_result, omp_result

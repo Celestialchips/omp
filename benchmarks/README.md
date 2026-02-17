@@ -47,22 +47,22 @@ Claude's raw recall is noisy and unreliable -- sometimes it gets lucky (92.3% at
 ### Deterministic Simulation (seed=42)
 
 ```
-Turn |      simulated_llm |       omp_anchored |   Drift
---------------------------------------------------------
-   1 |             100.0% |             100.0% |
-   5 |             100.0% |             100.0% |
-  10 |             100.0% |             100.0% |
-  15 |              94.4% |             100.0% |   1 fn(s)
-  20 |              69.7% |             100.0% |   6 fn(s)
-  25 |              76.9% |             100.0% |   6 fn(s)
-  30 |              41.7% |             100.0% |   11 fn(s)
-  35 |              42.9% |             100.0% |   12 fn(s)
-  40 |              50.0% |             100.0% |   11 fn(s)
-  45 |              46.7% |             100.0% |   13 fn(s)
-  50 |              62.7% |             100.0% |   11 fn(s)
+Turn |      simulated_llm |       omp_anchored |   Context Tk |   Drift
+-----------------------------------------------------------------------
+   1 |             100.0% |             100.0% |          413 |
+   5 |             100.0% |             100.0% |          480 |
+  10 |             100.0% |             100.0% |          522 |
+  15 |              94.4% |             100.0% |          528 |   1 fn(s)
+  20 |              69.7% |             100.0% |          892 |   6 fn(s)
+  25 |              76.9% |             100.0% |        1,002 |   6 fn(s)
+  30 |              41.7% |             100.0% |          970 |   11 fn(s)
+  35 |              42.9% |             100.0% |        1,064 |   12 fn(s)
+  40 |              50.0% |             100.0% |        1,157 |   11 fn(s)
+  45 |              46.7% |             100.0% |        1,258 |   13 fn(s)
+  50 |              62.7% |             100.0% |        1,437 |   11 fn(s)
 ```
 
-Reproducible -- anyone can run `python -m benchmarks.run --seed 42` and get this exact table. No API key needed.
+The **Context Tk** column shows the estimated token count of the running summary (compressed context) the model carries forward. Even at just ~1,400 tokens of context, the simulated model drifts significantly. Reproducible - anyone can run `python -m benchmarks.run --seed 42` and get this exact table.
 
 ## Two Modes
 
@@ -124,6 +124,21 @@ For each function in the ground truth, the scorer checks:
 5. **Phantoms** -- Did the LLM "remember" a function that no longer exists?
 
 Per-function score = average of (name, params, return_type) matches. Turn accuracy = average of all function scores.
+
+## Token Tracking
+
+The benchmark tracks token usage at each turn to answer: "how much compressed context is the model carrying when it starts to drift?"
+
+| Metric | Description |
+|--------|-------------|
+| **Context Tk** (summary_tokens) | Tokens in the running summary - the compressed context the model carries between turns |
+| source_tokens | Tokens of the raw source code at this turn |
+| prompt_tokens | Total input tokens for the update API call |
+| cumulative_tokens | Running total of all input tokens across all turns |
+
+For the Claude mode, `prompt_tokens` and `cumulative_tokens` are exact values from the Anthropic API usage response. For the simulated mode, they're estimated at ~4 characters per token.
+
+The key insight: drift is better understood as a function of compressed context size than turn count. A turn that renames one parameter barely grows the summary; a turn that extracts 5 methods into a class can double it.
 
 ## Methodology Note
 
