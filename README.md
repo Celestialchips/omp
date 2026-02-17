@@ -158,30 +158,6 @@ watcher.start(interval=2.0)
 
 **Staleness Detection:** Every extraction includes an `ast_hash` per function and a `file_hash` per file. When the agent retrieves a memory, OMP compares hashes against the current file on disk. If they diverge, the memory is marked **stale** and a re-parse is triggered automatically - preventing Semantic Drift.
 
-## Project Structure
-
-```
-omp/
-  __init__.py       # Public API
-  models.py         # Data models (Parameter, FunctionSignature, etc.)
-  core.py           # Extraction, staleness, project scanning
-  observer.py       # Semantic Track / Observer prompt / reconciliation
-  watcher.py        # File change detection
-  cli.py            # Command-line interface
-  parsers/
-    __init__.py     # Language registry
-    base.py         # Shared tree-sitter helpers
-    python.py       # Python extractor
-    typescript.py   # TypeScript/JS extractor
-    go.py           # Go extractor
-  storage/
-    __init__.py
-    base.py         # Abstract storage interface
-    sqlite.py       # SQLite backend
-tests/              # 53 tests covering all modules
-examples/           # Usage examples
-```
-
 ## CLI
 
 ```bash
