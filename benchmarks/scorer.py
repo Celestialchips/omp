@@ -34,12 +34,31 @@ class FunctionScore:
 
 
 @dataclass
+class TokenStats:
+    """Token usage for a single turn."""
+
+    summary_tokens: int = 0       # Tokens in the running summary / compressed context
+    source_tokens: int = 0        # Tokens in the source code at this turn
+    prompt_tokens: int = 0        # Total input tokens for the update call
+    cumulative_tokens: int = 0    # Running total of all input tokens across turns
+
+    def to_dict(self) -> dict:
+        return {
+            "summary_tokens": self.summary_tokens,
+            "source_tokens": self.source_tokens,
+            "prompt_tokens": self.prompt_tokens,
+            "cumulative_tokens": self.cumulative_tokens,
+        }
+
+
+@dataclass
 class TurnScore:
     """Aggregate score for a single turn."""
 
     turn: int
     function_scores: list[FunctionScore] = field(default_factory=list)
     phantom_count: int = 0  # Functions recalled that don't exist
+    token_stats: TokenStats | None = None
 
     @property
     def accuracy(self) -> float:
@@ -70,13 +89,16 @@ class BenchmarkResult:
         """Return a list of dicts suitable for tabular display."""
         rows = []
         for ts in self.turn_scores:
-            rows.append({
+            row = {
                 "turn": ts.turn,
                 "accuracy": round(ts.accuracy, 1),
                 "functions": len(ts.function_scores),
                 "drifted": len(ts.drifted_functions),
                 "phantoms": ts.phantom_count,
-            })
+            }
+            if ts.token_stats:
+                row["tokens"] = ts.token_stats.to_dict()
+            rows.append(row)
         return rows
 
     def to_dict(self) -> dict:
@@ -150,11 +172,20 @@ def format_results(
     if sample_turns is None:
         sample_turns = [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50]
 
+    # Check if any result has token stats
+    has_tokens = any(
+        ts.token_stats is not None
+        for r in results
+        for ts in r.turn_scores
+    )
+
     # Build header
     mode_names = [r.mode for r in results]
     header_parts = ["Turn"]
     for name in mode_names:
         header_parts.append(f"{name:>18s}")
+    if has_tokens:
+        header_parts.append("  Context Tk")
     header_parts.append("  Drift")
     header = " | ".join(header_parts)
     separator = "-" * len(header)
@@ -177,6 +208,7 @@ def format_results(
     for t in sample_turns:
         parts = [f"{t:4d}"]
         drift_info = ""
+        token_info = ""
         for i, r in enumerate(results):
             ts = turn_indices[i].get(t)
             if ts:
@@ -184,11 +216,32 @@ def format_results(
                 parts.append(f"{acc_str:>18s}")
                 if ts.drifted_functions and i == 0:
                     drift_info = f"  {len(ts.drifted_functions)} fn(s)"
+                if has_tokens and ts.token_stats and i == 0:
+                    stk = ts.token_stats.summary_tokens
+                    token_info = f"  {stk:>10,d}"
             else:
                 parts.append(f"{'N/A':>18s}")
+        if has_tokens:
+            parts.append(token_info)
         parts.append(drift_info)
         lines.append("  " + " | ".join(parts))
 
     lines.append(f"  {separator}")
+
+    # Token summary footer
+    if has_tokens:
+        first_result = results[0]
+        scored = [ts for ts in first_result.turn_scores if ts.token_stats]
+        if scored:
+            final = scored[-1]
+            lines.append("")
+            lines.append(
+                f"  Context Tk = tokens in the running summary (compressed context)."
+            )
+            lines.append(
+                f"  Final summary: {final.token_stats.summary_tokens:,d} tokens | "
+                f"Cumulative input: {final.token_stats.cumulative_tokens:,d} tokens"
+            )
+
     lines.append("")
     return "\n".join(lines)
