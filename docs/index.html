@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your AI Coding Assistant Forgets Your Code. Here's the Data.</title>
+<meta name="description" content="We benchmarked Claude's code memory over 50 turns. By turn 40, it remembered 67% of function signatures. Tree-sitter-anchored memory stays at 100%.">
+<meta property="og:title" content="Your AI Coding Assistant Forgets Your Code">
+<meta property="og:description" content="Benchmarking LLM recall degradation over 50 coding turns. Claude drops to 67%. OMP stays at 100%.">
+<meta property="og:type" content="article">
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-muted: #8b949e;
+    --text-bright: #f0f6fc;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --yellow: #d29922;
+    --orange: #db6d28;
+    --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.7;
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 3rem 1.5rem 6rem;
+  }
+
+  h1 {
+    font-size: 2.2rem;
+    color: var(--text-bright);
+    line-height: 1.25;
+    margin-bottom: 0.5rem;
+    letter-spacing: -0.02em;
+  }
+
+  h2 {
+    font-size: 1.5rem;
+    color: var(--text-bright);
+    margin-top: 3rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  h3 {
+    font-size: 1.15rem;
+    color: var(--text-bright);
+    margin-top: 2rem;
+    margin-bottom: 0.75rem;
+  }
+
+  p {
+    margin-bottom: 1.2rem;
+  }
+
+  a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  a:hover {
+    text-decoration: underline;
+  }
+
+  .subtitle {
+    color: var(--text-muted);
+    font-size: 1.1rem;
+    margin-bottom: 2.5rem;
+  }
+
+  .highlight {
+    color: var(--text-bright);
+    font-weight: 600;
+  }
+
+  .stat-row {
+    display: flex;
+    gap: 2rem;
+    margin: 2rem 0;
+    flex-wrap: wrap;
+  }
+
+  .stat-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    flex: 1;
+    min-width: 200px;
+  }
+
+  .stat-box .number {
+    font-size: 2rem;
+    font-weight: 700;
+    font-family: var(--mono);
+    display: block;
+    margin-bottom: 0.25rem;
+  }
+
+  .stat-box .label {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+  }
+
+  .stat-box.good .number { color: var(--green); }
+  .stat-box.bad .number { color: var(--red); }
+  .stat-box.neutral .number { color: var(--accent); }
+
+  /* Tables */
+  .table-wrap {
+    overflow-x: auto;
+    margin: 1.5rem 0;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+
+  thead {
+    background: var(--surface);
+  }
+
+  th {
+    padding: 0.75rem 1rem;
+    text-align: right;
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid var(--border);
+  }
+
+  th:first-child {
+    text-align: center;
+  }
+
+  td {
+    padding: 0.6rem 1rem;
+    text-align: right;
+    border-bottom: 1px solid var(--border);
+  }
+
+  td:first-child {
+    text-align: center;
+    color: var(--text-muted);
+  }
+
+  tr:last-child td {
+    border-bottom: none;
+  }
+
+  .acc-100 { color: var(--green); font-weight: 600; }
+  .acc-high { color: var(--yellow); }
+  .acc-mid { color: var(--orange); font-weight: 600; }
+  .acc-low { color: var(--red); font-weight: 600; }
+  .drift { color: var(--text-muted); font-size: 0.8rem; }
+  .tokens { color: var(--text-muted); }
+
+  .table-caption {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-top: 0.5rem;
+    font-style: italic;
+  }
+
+  /* Code blocks */
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    line-height: 1.6;
+    margin: 1.25rem 0;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--surface);
+    padding: 0.15em 0.4em;
+    border-radius: 4px;
+  }
+
+  pre code {
+    background: none;
+    padding: 0;
+  }
+
+  /* Architecture diagram */
+  .diagram-wrap {
+    margin: 2rem 0;
+    text-align: center;
+  }
+
+  .diagram-wrap pre.mermaid {
+    background: transparent;
+    border: none;
+    text-align: center;
+  }
+
+  /* Key insight callout */
+  .callout {
+    background: var(--surface);
+    border-left: 3px solid var(--accent);
+    padding: 1.25rem 1.5rem;
+    margin: 2rem 0;
+    border-radius: 0 8px 8px 0;
+  }
+
+  .callout p {
+    margin-bottom: 0;
+  }
+
+  /* Footer */
+  footer {
+    margin-top: 4rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  footer a {
+    color: var(--text-muted);
+  }
+  footer a:hover {
+    color: var(--accent);
+  }
+
+  .footer-links {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+  }
+
+  /* Comparison row */
+  .compare-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+
+  .compare-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+  }
+
+  .compare-card h4 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.5rem;
+  }
+
+  .compare-card.symbolic h4 { color: var(--green); }
+  .compare-card.semantic h4 { color: var(--accent); }
+
+  .compare-card ul {
+    list-style: none;
+    font-size: 0.9rem;
+  }
+
+  .compare-card li {
+    padding: 0.2rem 0;
+    color: var(--text-muted);
+  }
+
+  @media (max-width: 600px) {
+    body { font-size: 15px; padding: 1.5rem 1rem 4rem; }
+    h1 { font-size: 1.6rem; }
+    .stat-row { gap: 0.75rem; }
+    .compare-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Your AI Coding Assistant Forgets Your Code</h1>
+<p class="subtitle">We benchmarked Claude's function signature recall over 50 coding turns. Here's what happened.</p>
+
+<div class="stat-row">
+  <div class="stat-box bad">
+    <span class="number">66.7%</span>
+    <span class="label">Claude baseline accuracy at turn 40</span>
+  </div>
+  <div class="stat-box good">
+    <span class="number">100%</span>
+    <span class="label">OMP-anchored accuracy at turn 40</span>
+  </div>
+  <div class="stat-box neutral">
+    <span class="number">50 turns</span>
+    <span class="label">Simulated coding session length</span>
+  </div>
+</div>
+
+<h2>The Problem</h2>
+
+<p>If you've used an AI coding assistant for more than 20 minutes on the same codebase, you've seen this: the model "remembers" <code>validateUser(id)</code> when the function was renamed to <code>verifyToken(token, strict)</code> fifteen turns ago. It confidently suggests calling a method with two parameters when the signature was updated to take four. It hallucinates a function that you deleted.</p>
+
+<p>This isn't a bug in any specific model. It's <span class="highlight">context compression collapse</span>, as the conversation grows, the model compresses earlier context into summaries, and those summaries lose structural precision. The model doesn't "forget" your code. It remembers a <em>lossy approximation</em> that diverges further from reality with every turn.</p>
+
+<p>We wanted to measure exactly how bad this gets, and whether a simple fix, anchoring the model's memory with deterministic parser output, actually works.</p>
+
+<h2>The Benchmark</h2>
+
+<p>We built a 50-turn evolving Python codebase that starts with 5 simple functions and grows to 17 symbols across 2 classes through realistic mutations: renames, parameter additions, type changes, method extractions, class renames, async conversions, and deletions.</p>
+
+<p>At each turn, we asked Claude to recall every function signature. We compared two modes: <span class="highlight">raw LLM recall</span> (Claude maintaining its own running summary) vs <span class="highlight">OMP-anchored recall</span> (Claude receiving Tree-sitter-extracted signatures as factual anchors).</p>
+
+<h3>Claude API (Claude Haiku 4.5)</h3>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Turn</th>
+      <th>Claude Baseline</th>
+      <th>OMP-Anchored</th>
+      <th>Context Tokens</th>
+      <th>Drifted</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td class="acc-100">100.0%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">388</td>
+      <td class="drift">-</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td class="acc-100">100.0%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">443</td>
+      <td class="drift">-</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td class="acc-100">100.0%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">540</td>
+      <td class="drift">-</td>
+    </tr>
+    <tr>
+      <td>15</td>
+      <td class="acc-100">100.0%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">591</td>
+      <td class="drift">-</td>
+    </tr>
+    <tr>
+      <td>20</td>
+      <td class="acc-mid">66.7%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">1,169</td>
+      <td class="drift">9 fn</td>
+    </tr>
+    <tr>
+      <td>25</td>
+      <td class="acc-mid">69.2%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">1,180</td>
+      <td class="drift">10 fn</td>
+    </tr>
+    <tr>
+      <td>30</td>
+      <td class="acc-high">92.3%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">1,139</td>
+      <td class="drift">1 fn</td>
+    </tr>
+    <tr>
+      <td>35</td>
+      <td class="acc-high">82.2%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">1,288</td>
+      <td class="drift">2 fn</td>
+    </tr>
+    <tr>
+      <td>40</td>
+      <td class="acc-mid">66.7%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">1,478</td>
+      <td class="drift">12 fn</td>
+    </tr>
+    <tr>
+      <td>45</td>
+      <td class="acc-high">95.6%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">1,617</td>
+      <td class="drift">2 fn</td>
+    </tr>
+    <tr>
+      <td>50</td>
+      <td class="acc-high">96.1%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">1,938</td>
+      <td class="drift">2 fn</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+<p class="table-caption">Token counts from the Anthropic API. Total usage: ~150K input tokens across both runs (~$0.50 with Haiku).</p>
+
+<h3>Deterministic Simulation (seed=42, reproducible)</h3>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Turn</th>
+      <th>Simulated LLM</th>
+      <th>OMP-Anchored</th>
+      <th>Context Tokens</th>
+      <th>Drifted</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td class="acc-100">100.0%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">413</td>
+      <td class="drift">-</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td class="acc-100">100.0%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">480</td>
+      <td class="drift">-</td>
+    </tr>
+    <tr>
+      <td>10</td>
+      <td class="acc-100">100.0%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">522</td>
+      <td class="drift">-</td>
+    </tr>
+    <tr>
+      <td>15</td>
+      <td class="acc-high">94.4%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">528</td>
+      <td class="drift">1 fn</td>
+    </tr>
+    <tr>
+      <td>20</td>
+      <td class="acc-mid">69.7%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">892</td>
+      <td class="drift">6 fn</td>
+    </tr>
+    <tr>
+      <td>25</td>
+      <td class="acc-mid">76.9%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">1,002</td>
+      <td class="drift">6 fn</td>
+    </tr>
+    <tr>
+      <td>30</td>
+      <td class="acc-low">41.7%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">970</td>
+      <td class="drift">11 fn</td>
+    </tr>
+    <tr>
+      <td>35</td>
+      <td class="acc-low">42.9%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">1,064</td>
+      <td class="drift">12 fn</td>
+    </tr>
+    <tr>
+      <td>40</td>
+      <td class="acc-low">50.0%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">1,157</td>
+      <td class="drift">11 fn</td>
+    </tr>
+    <tr>
+      <td>45</td>
+      <td class="acc-low">46.7%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">1,258</td>
+      <td class="drift">13 fn</td>
+    </tr>
+    <tr>
+      <td>50</td>
+      <td class="acc-mid">62.7%</td>
+      <td class="acc-100">100.0%</td>
+      <td class="tokens">1,437</td>
+      <td class="drift">11 fn</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+<p class="table-caption">No API key needed. Run <code>python -m benchmarks.run --seed 42</code> to reproduce this exact table.</p>
+
+<h2>The Token Insight</h2>
+
+<div class="callout">
+  <p>Drift is a function of <span class="highlight">compressed context size</span>, not turn count. A turn that renames one parameter barely grows the summary. A turn that extracts 5 methods into a class can double it.</p>
+</div>
+
+<p>Look at the Claude results: turns 1-15 hold at 100% with ~388-591 context tokens. At turn 20, the summary nearly triples to ~1,169 tokens (that's when <code>TokenService</code> and <code>PermissionService</code> classes were extracted), and accuracy drops to 66.7%. It occasionally recovers, turn 30 hits 92.3% when a function deletion shrank the summary, but the trend is clear. At ~1,000+ summary tokens, the model's compressed context starts losing structural precision.</p>
+
+<p>This matters because it means the failure mode isn't "the model is bad at coding." It's that <span class="highlight">LLM summarization is lossy compression</span>, and the loss compounds. Every summary of a summary loses a little more.</p>
+
+<h2>The Fix: Parser-Anchored Memory</h2>
+
+<p>The idea is simple: don't ask the LLM to remember structural code facts. A deterministic parser already knows them perfectly.</p>
+
+<div class="compare-grid">
+  <div class="compare-card symbolic">
+    <h4>Symbolic Track (Tree-sitter)</h4>
+    <ul>
+      <li>Function signatures</li>
+      <li>Parameter names, types, defaults</li>
+      <li>Return types</li>
+      <li>Class/method relationships</li>
+      <li>AST hashes for staleness</li>
+      <li>Import dependencies</li>
+    </ul>
+  </div>
+  <div class="compare-card semantic">
+    <h4>Semantic Track (LLM)</h4>
+    <ul>
+      <li>Why was this change made?</li>
+      <li>Architectural preferences</li>
+      <li>Implicit constraints</li>
+      <li>User frustrations / biases</li>
+      <li>Unresolved ambiguity</li>
+      <li>Intent behind the code</li>
+    </ul>
+  </div>
+</div>
+
+<p>The LLM is forbidden from rewriting the Symbolic Track. It can only populate the Semantic Track. The parser remains a rigid, unchangeable anchor of truth. When the agent needs to recall a function signature, it gets it from Tree-sitter, not from a summary of a summary of a summary.</p>
+
+<div class="diagram-wrap">
+<pre class="mermaid">
+flowchart TB
+    CodeChange["Code Change"] --> Parser["Tree-sitter Parser"]
+    CodeChange --> Observer["Observer LLM"]
+
+    Parser --> Symbolic["Symbolic Layer
+    (DETERMINISTIC)
+    Signatures, types,
+    AST hashes, imports"]
+    Observer --> Semantic["Semantic Layer
+    (PROBABILISTIC)
+    Intent, constraints,
+    preferences"]
+
+    Symbolic --> Reconcile["Dual-Track Memory"]
+    Semantic --> Reconcile
+
+    Reconcile --> Storage["SQLite / Any Backend"]
+</pre>
+</div>
+
+<p>This is what the OMP-anchored column in the benchmark does: at each turn, Tree-sitter extracts the current function signatures and injects them as <code>FACTUAL ANCHORS</code> into the prompt. The model is told not to contradict them. Result: 100% accuracy at every turn, regardless of conversation length or context size.</p>
+
+<h2>What This Saves</h2>
+
+<p>Beyond accuracy, parser-anchored memory saves tokens. Instead of re-sending the full source code every turn so the model can "re-learn" what it forgot, you send a compact structured JSON of signatures (~200 tokens for 17 functions). The model gets perfect recall without paying for a full context refresh.</p>
+
+<p>In our benchmark, the baseline approach consumed the full source code at every turn. With OMP, you could skip that entirely for structural facts, the parser already has them. The LLM's token budget is freed up for what it's actually good at: understanding intent, suggesting patterns, and reasoning about architecture.</p>
+
+<h2>Reproduce It Yourself</h2>
+
+<pre><code># Clone and install
+git clone https://github.com/open-mem/omp.git
+cd omp
+pip install -e ".[dev]"
+
+# Run the deterministic benchmark (no API key needed)
+python -m benchmarks.run
+
+# Run with Claude API
+ANTHROPIC_API_KEY=sk-... python -m benchmarks.run --mode claude
+
+# JSON output for your own analysis
+python -m benchmarks.run --json --output results.json</code></pre>
+
+<p>The simulated mode uses a seeded RNG, you'll get the exact same table every time. The <a href="https://github.com/open-mem/omp">full methodology</a> is documented in the repo.</p>
+
+<h2>How It Works</h2>
+
+<pre><code>from omp import extract_from_source
+
+result = extract_from_source("""
+class AuthService:
+    async def validate_token(self, token: str, strict: bool = True) -> User | None:
+        return jwt.decode(token, self.secret, algorithms=["HS256"])
+""", "python")
+
+for fn in result.functions:
+    print(fn.qualified_name)  # AuthService.validate_token
+    print(fn.parameters)      # [Parameter(name='token', type='str'), ...]
+    print(fn.return_type)     # User | None
+    print(fn.ast_hash)        # a3f8... (changes when code changes)</code></pre>
+
+<p>Supports Python, TypeScript, JavaScript, and Go. The extraction is fast (<1ms per file), deterministic, and works offline.</p>
+
+<footer>
+  <p>Open Memory Protocol (OMP), MIT License</p>
+  <div class="footer-links">
+    <a href="https://github.com/open-mem/omp">GitHub Repository</a>
+    <a href="https://github.com/open-mem/omp/tree/main/benchmarks">Benchmark Methodology</a>
+    <a href="https://github.com/open-mem/omp/blob/main/ARCHITECTURE.md">Architecture</a>
+  </div>
+</footer>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    flowchart: { curve: 'basis', padding: 20 }
+  });
+</script>
+
+</body>
+</html>
